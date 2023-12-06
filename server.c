@@ -10,6 +10,7 @@
 #define MAP_H
 #define MAX_PATH_LENGTH 512
 
+// linked-list to keep track of all the nodes of users
 typedef struct map_node_t {
     int key;
     int loginStatus;
@@ -25,27 +26,9 @@ typedef struct map_t{
 } map_t;
 
 // functions for map =====================================================================
-// create a map and return a pointer
-map_t* map_create() {
-    map_t* map = malloc(sizeof(map_t));
-    map->head = NULL;
-    map->size = 0;
-    return map;
-}
-
-// free memory of map and its nodes
-void map_destroy(map_t* map) {
-    map_node_t* current = map->head;
-    while (current) {
-        map_node_t* next = current->next;
-        free(current);
-        current = next;
-    }
-    free(map);
-}
 
 // add key-value pair to map
-int map_put(map_t* map, int key, char username[], char password[], char cwd[]) {
+int add_map(map_t* map, int key, char username[], char password[], char cwd[]) {
     map_node_t* new_node = malloc(sizeof(map_node_t));
     if (!new_node) {
         return 0;
@@ -70,7 +53,7 @@ int map_put(map_t* map, int key, char username[], char password[], char cwd[]) {
 }
 
 // gets the node for the specific key
-map_node_t* map_get(map_t* map, int key) {
+map_node_t* extract_map(map_t* map, int key) {
     map_node_t* current = map->head;
     while (current != NULL) {
         if (current->key == key) {
@@ -81,35 +64,9 @@ map_node_t* map_get(map_t* map, int key) {
     return NULL;
 }
 
-// remove the node with the specific key
-int map_remove(map_t* map, int key) {
-    map_node_t* current = map->head;
-    map_node_t* previous = NULL;
-    while (current != NULL) {
-        if (current->key == key) {
-            if (previous == NULL) {
-                map->head = current->next;
-            } else {
-                previous->next = current->next;
-            }
-            free(current);
-            map->size--;
-            return 1;
-        }
-        previous = current;
-        current = current->next;
-    }
-    return 0;
-}
-
-// get the size of map
-size_t map_size(map_t* map) {
-    return map->size;
-}
 
 // function to receive file
 void receive_file(int fd, char* file_name){
-
     char buffer[1000];
     memset(buffer, 0 , sizeof(buffer));
 
@@ -166,7 +123,7 @@ void send_file(FILE* fp, int fd){
 
 // function declarations
 int userCommand(char* username, map_t* map, int sd, char* initial_directory);
-int passwordCommand(char* password, map_t* map, int sd);
+int passwordCommand(char* password, map_t* map, int sd, char* initial_directory);
 void portCommand(int control_socket, char* argument);
 
 int PORTNO = 21;
@@ -181,7 +138,7 @@ int main(int argc, char** argv){
 	struct sockaddr_in server_addr, client_addr;
 	server_sd = socket(AF_INET, SOCK_STREAM, 0);
 	if (server_sd < 0){
-		perror("Failed to create server socket");
+		perror("creating server socket failed");
 		exit(-1);
 	}
 
@@ -192,13 +149,13 @@ int main(int argc, char** argv){
 
 	// bind the server socket
 	if (bind(server_sd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        perror("bind failed");
+        perror("bind() failed");
         exit(-1);
     }
 
     // set socket to passive mode to wait for connection
     if (listen(server_sd, MAX_CONNECTIONS) < 0){
-    	perror("listen failed");
+    	perror("listen() failed");
     	close(server_sd);
     	exit(-1);
     }
@@ -214,13 +171,15 @@ int main(int argc, char** argv){
     max_fd = server_sd;
 
     // initialize maps to handle multiple connections with multiple clients
-    map_t* map = map_create();
+    map_t* map = malloc(sizeof(map_t));
+    map->head = NULL;
+    map->size = 0;
 
     // get base directory
 	char base_directory[1000];
 	memset(base_directory, 0, sizeof(base_directory));
 	if (getcwd(base_directory, sizeof(base_directory)) == NULL){
-		perror("getcwd() error");
+		perror("getcwd() failed");
 		exit(-1);
 	}
 
@@ -272,13 +231,13 @@ int main(int argc, char** argv){
 						// if the user has entered the valid username, continue
 						char SEQ_ERROR[] = "503 Bad sequence of commands";
 
-						if (map_get(map, fd)){
+						if (extract_map(map, fd)){
 							send(fd, SEQ_ERROR, strlen(SEQ_ERROR), 0);
 							continue;
 						}
 
 						// if the user is logged in, continue
-						else if(map_get(map, fd) && map_get(map, fd)->loginStatus){
+						else if(extract_map(map, fd) && extract_map(map, fd)->loginStatus){
 							send(fd, SEQ_ERROR, strlen(SEQ_ERROR), 0);
 							continue;
 						}
@@ -304,13 +263,13 @@ int main(int argc, char** argv){
 						// if the user has entered the valid username, continue
 						char SEQ_ERROR[] = "503 Bad sequence of commands";
 
-						if (map_get(map, fd)){
+						if (extract_map(map, fd)){
 							send(fd, SEQ_ERROR, strlen(SEQ_ERROR), 0);
 							continue;
 						}
 
 						// if the user is logged in, continue
-						else if(map_get(map, fd) && map_get(map, fd)->loginStatus){
+						else if(extract_map(map, fd) && extract_map(map, fd)->loginStatus){
 							send(fd, SEQ_ERROR, strlen(SEQ_ERROR), 0);
 							continue;
 						}
@@ -319,7 +278,7 @@ int main(int argc, char** argv){
 						char password[128];
 						memset(&password, 0, sizeof(password));
 						strncpy(password, buffer+5, strlen(buffer)-4);
-						int response = passwordCommand(password, map, fd);
+						int response = passwordCommand(password, map, fd, base_directory);
 						if (response){
 							char PASS_RESPONSE[] = "230 User logged in, proceed.";
 							send(fd, PASS_RESPONSE, strlen(PASS_RESPONSE), 0);
@@ -331,16 +290,32 @@ int main(int argc, char** argv){
 						memset(&buffer, 0, sizeof(buffer));
 					}
 
-					// Command 3: QUIT
-                    else if(!strncmp(buffer, "QUIT", 4)) {
+                    // Command 3: QUIT
+                    else if (!strncmp(buffer, "QUIT", 4)) {
                         // remove user information from map
-                        if(map_get(map, fd)) {
-                            map_remove(map, fd);
+                        if (extract_map(map, fd)) {
+                            // delete the map node with the fd key
+                            map_node_t *current = map->head;
+                            map_node_t *previous = NULL;
+
+                            while (current != NULL) {
+                                if (current->key == fd) {
+                                    if (previous == NULL) {
+                                        map->head = current->next;
+                                    } else {
+                                        previous->next = current->next;
+                                    }
+                                    free(current);
+                                    map->size--;
+                                }
+                                previous = current;
+                                current = current->next;
+                            }
                         }
                         // send message to client
                         char QUIT_RESPONSE[] = "221 Service closing control connection.";
-                        send(fd, QUIT_RESPONSE,strlen(QUIT_RESPONSE),0);
-                        printf("connection closed from client side \n");
+                        send(fd, QUIT_RESPONSE, strlen(QUIT_RESPONSE), 0);
+                        printf("Connection closed from client side \n");
 
                         // close connection
                         close(fd);
@@ -348,10 +323,23 @@ int main(int argc, char** argv){
                         memset(&buffer, 0, sizeof(buffer));
                     }
 
+
 					// check if logged in successfully before doing CWD, PWD, PORT, LIST, RETR and STOR
-                    else if(!map_get(map,fd) || !map_get(map,fd)->loginStatus) {
+                    else if(!extract_map(map,fd) || !extract_map(map,fd)->loginStatus) {
                         char AUTH_ERROR[] = "530 Not logged in.";
                         send(fd, AUTH_ERROR,strlen(AUTH_ERROR),0);
+                        memset(&buffer, 0, sizeof(buffer));
+                        continue;
+                    }
+
+                    // check if logged in successfully before doing CWD, PWD, PORT, LIST, RETR, and STOR
+                    map_node_t* user_node = extract_map(map, fd);
+                    char user_directory[512];
+                    snprintf(user_directory, sizeof(user_directory), "%s/%s", extract_map(map, fd)->currentWorkingDirectory, extract_map(map, fd)->username);
+
+                    if (!user_node || !user_node->loginStatus || strcmp(user_node->currentWorkingDirectory, user_directory) != 0) {
+                        char AUTH_ERROR[] = "530 Not logged in.";
+                        send(fd, AUTH_ERROR, strlen(AUTH_ERROR), 0);
                         memset(&buffer, 0, sizeof(buffer));
                         continue;
                     }
@@ -363,7 +351,7 @@ int main(int argc, char** argv){
                     	memset(&path, 0, sizeof(path));
                     	strncpy(path, buffer+4, strlen(buffer)-3);
 
-                    	// change directory
+                    	// change directory to a new path
                     	int response = chdir(path);
                     	if (response != 0){
                             char DT_ERROR[] = "550 No such file or directory.";
@@ -375,11 +363,15 @@ int main(int argc, char** argv){
                     	else{
                     		memset(&path, 0, sizeof(path));
                     		if (getcwd(path, sizeof(path)) == NULL){
-                    			perror("getcwd() error");
+                    			perror("getcwd() failed");
                     			exit(-1);
                     		}
-                    		memset(map_get(map, fd)->currentWorkingDirectory, 0, sizeof(map_get(map, fd)->currentWorkingDirectory));
-                    		strcpy(map_get(map, fd)->currentWorkingDirectory, path);
+
+                            // update the current working directory in the map
+                    		memset(extract_map(map, fd)->currentWorkingDirectory, 0, sizeof(extract_map(map, fd)->currentWorkingDirectory));
+                    		strcpy(extract_map(map, fd)->currentWorkingDirectory, path);
+
+                            // send response to client
                     		char res[500];
                     		char CWD_RESPONSE[] = "200 directory changed to ";
                     		strcpy(res, CWD_RESPONSE);
@@ -392,25 +384,40 @@ int main(int argc, char** argv){
 
                     // Command 5: PWD
                     else if(!strncmp(buffer, "PWD", 3)){
-                            // retrive current directory
-                            char resp[500];
-                            memset(&resp, 0, sizeof(resp));
-                            char PWD_RESPONSE[] = "257 ";
-                            strcpy(resp, PWD_RESPONSE);
-                            strcat(resp, map_get(map,fd)->currentWorkingDirectory);
-                            send(fd,resp,strlen(resp),0);
-                            memset(&buffer, 0, sizeof(buffer));
+                        // retrieve current directory
+                        char current_directory[512];
+                        memset(&current_directory, 0, sizeof(current_directory));
+
+                        // build current directory as {current directory}/{username of user}
+                        snprintf(current_directory, sizeof(current_directory), "%s/%s", extract_map(map, fd)->currentWorkingDirectory, extract_map(map, fd)->username);
+
+                        // prepare the PWD response
+                        char resp[500];
+                        memset(&resp, 0, sizeof(resp));
+                        char PWD_RESPONSE[] = "257 ";
+                        strcpy(resp, PWD_RESPONSE);
+                        strcat(resp, extract_map(map,fd)->currentWorkingDirectory);
+
+                        // send response to client
+                        send(fd,resp,strlen(resp),0);
+                        memset(&buffer, 0, sizeof(buffer));
                         }
 
                     // Command 6: PORT (LIST, RETR, and STOR)
                     else if (!strncmp(buffer, "PORT", 4)) {
-                        
-                        // change directory to current directory
-                        if (chdir(map_get(map,fd)->currentWorkingDirectory) != 0){
-                            printf("chdir() failed\n");
+
+                        // retrieve current directory
+                        char current_directory[512];
+                        memset(&current_directory, 0, sizeof(current_directory));
+
+                        // build current directory as {current directory}/{username of user}
+                        snprintf(current_directory, sizeof(current_directory), "%s/%s", extract_map(map, fd)->currentWorkingDirectory, extract_map(map, fd)->username);
+
+                        if (chdir(current_directory) != 0) {
+                            perror("chdir() failed");
                             return -1;
                         }
-
+                    
                         // retrieve client input
                         char args[128];
                         memset(&args, 0, sizeof(args));
@@ -418,7 +425,7 @@ int main(int argc, char** argv){
 
                         // handle LIST, STOR, RETR
                         portCommand(fd, buffer);
-                        memset(buffer,0,sizeof(buffer));
+                        memset(buffer, 0, sizeof(buffer));
                     }  
 
                     // invalid commands
@@ -430,7 +437,16 @@ int main(int argc, char** argv){
 			}
 		}
 	}
-	map_destroy(map);
+
+    //  free memory of map and its nodes
+    map_node_t* current = map->head;
+    while (current){
+        map_node_t* next = current->next;
+        free(current);
+        current = next;
+    }
+    free(map);
+
 	return 0;
 }
 
@@ -442,9 +458,9 @@ int userCommand(char* username, map_t* map, int sd, char* base_directory){
 	}
 
 	// check current users
-	FILE* fp = fopen("users.txt", "r");
+	FILE* fp = fopen("users.csv", "r");
     if(!fp) {
-        perror("opening users.txt failed");
+        perror("opening users.csv failed");
         exit(-1);
     }
     char line[100];
@@ -461,10 +477,18 @@ int userCommand(char* username, map_t* map, int sd, char* base_directory){
             fclose(fp);
 
             if (getcwd(cwd, sizeof(cwd)) == NULL) {
-                perror("getcwd() error");
+                perror("getcwd() failed");
                 exit(-1);
             }
-            map_put(map, sd, username, token, cwd);
+            add_map(map, sd, username, token, cwd);
+
+            // change the current directory to {current directory}/{username of this user}
+            char user_directory[512];
+            snprintf(user_directory, sizeof(user_directory), "%s/%s", base_directory, username);
+            if (chdir(user_directory) != 0){
+                perror("chdir() failed");
+                exit(-1);
+            }
             return 1;
         }
         memset(line,0,sizeof(line));
@@ -473,13 +497,21 @@ int userCommand(char* username, map_t* map, int sd, char* base_directory){
 }
 
 // internal function for Command 2: PASS
-int passwordCommand(char* password, map_t* map, int sd) {
+int passwordCommand(char* password, map_t* map, int sd, char* base_directory) {
 	// retrieve map using socket descripter
-    map_node_t* node = map_get(map, sd); 
+    map_node_t* node = extract_map(map, sd); 
 
     // if the password matches, log in 
     if(!strcmp(node->password, password)) {
         node->loginStatus = 1;
+
+        // change the current directory to {current directory}/{username of this user}
+        char user_directory[512];
+        snprintf(user_directory, sizeof(user_directory), "%s/%s", base_directory, node->username);
+        if (chdir(user_directory) != 0){
+            perror("chdir() failed");
+            exit(-1);
+        }
         return 1;
     }
     return 0;
@@ -546,7 +578,7 @@ void portCommand(int control_socket, char* argument){
     // store request into the array
     int bytes = recv(control_socket,buffer,sizeof(buffer),0);
     if(bytes<0) {
-        perror("recv failed");
+        perror("recv() failed");
         exit(-1);
     }
 
@@ -592,7 +624,7 @@ void portCommand(int control_socket, char* argument){
         int optval = 1;
         setsockopt(data_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));      
         if (data_socket == -1) {
-            perror("socket creation failed");
+            perror("creating socket failed");
             exit(-1);
         }
 
@@ -604,7 +636,7 @@ void portCommand(int control_socket, char* argument){
         
         // bind socket to new address
         if (bind(data_socket, (struct sockaddr*) &data_addr, sizeof(data_addr)) == -1) {
-            perror("bind failed");
+            perror("bind() failed");
             exit(-1);
         }
 
@@ -662,4 +694,3 @@ void portCommand(int control_socket, char* argument){
         exit(EXIT_SUCCESS);
     }
 }
-
