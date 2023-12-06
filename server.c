@@ -122,8 +122,8 @@ void send_file(FILE* fp, int fd){
 // =======================================================================================
 
 // function declarations
-int userCommand(char* username, map_t* map, int sd, char* initial_directory);
-int passwordCommand(char* password, map_t* map, int sd, char* initial_directory);
+int userCommand(char* username, map_t* map, int sd, char* base_directory);
+int passwordCommand(char* password, map_t* map, int sd, char* base_directory);
 void portCommand(int control_socket, char* argument);
 
 int PORTNO = 21;
@@ -396,10 +396,10 @@ int main(int argc, char** argv){
                         memset(&resp, 0, sizeof(resp));
                         char PWD_RESPONSE[] = "257 ";
                         strcpy(resp, PWD_RESPONSE);
-                        strcat(resp, extract_map(map,fd)->currentWorkingDirectory);
+                        strcat(resp, current_directory);
 
                         // send response to client
-                        send(fd,resp,strlen(resp),0);
+                        send(fd,resp, strlen(resp), 0);
                         memset(&buffer, 0, sizeof(buffer));
                         }
 
@@ -481,17 +481,17 @@ int userCommand(char* username, map_t* map, int sd, char* base_directory){
                 exit(-1);
             }
             add_map(map, sd, username, token, cwd);
-
-            // change the current directory to {current directory}/{username of this user}
-            char user_directory[512];
-            snprintf(user_directory, sizeof(user_directory), "%s/%s", base_directory, username);
-            if (chdir(user_directory) != 0){
-                perror("chdir() failed");
-                exit(-1);
-            }
             return 1;
         }
         memset(line,0,sizeof(line));
+
+        // change the current directory to {current directory}/{username of this user}
+        char user_directory[512];
+        snprintf(user_directory, sizeof(user_directory), "%s/%s", base_directory, username);
+        if (chdir(user_directory) != 0){
+            perror("chdir() failed");
+            exit(-1);
+        }
     }
     return 0;
 }
@@ -694,3 +694,4 @@ void portCommand(int control_socket, char* argument){
         exit(EXIT_SUCCESS);
     }
 }
+
