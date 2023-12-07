@@ -83,23 +83,20 @@ int PORT_helper(int client_socket, struct sockaddr_in client_address)
     client_data_address.sin_family = AF_INET;
     client_data_address.sin_addr.s_addr = client_address.sin_addr.s_addr;
 
-    //---------------小心！！！------------------
-    // bind the socket to the copy of client address
-    int binding_success = 0;
-	while(binding_success == 0)
+    client_data_port += 1;
+	while(1)
     {
 		client_data_address.sin_port = htons(client_data_port);
-		if(bind(client_data_socket,(struct sockaddr *)&client_data_address,sizeof(client_data_address))>=0){
-			binding_success = 1;
+		if(bind(client_data_socket,(struct sockaddr *)&client_data_address,sizeof(client_data_address))>=0)
+        {
+			break;
 		}
-        else{
+        else
+        {
             client_data_port += 1;
         }
 	}
-    //---------------直接复制的！！！------------------
-    //client_data_port += 1;
-
-	printf("Data port: %d\n", client_data_port);
+    
 
     // get the ip address of the client
     char *client_ip = inet_ntoa(client_address.sin_addr);
@@ -266,7 +263,7 @@ int main()
         }
 
         // Command 6: !CWD folder_name
-        else if (strncmp(input, "!CWD", 5) == 0)
+        else if (strncmp(input, "!CWD", 4) == 0)
         {
             char **parts = split_string(input, " ");
             if (parts[1] == NULL)
@@ -316,6 +313,7 @@ int main()
             int client_data_socket = PORT_helper(client_socket, client_address);
             if (client_data_socket < 0)
             {
+                printf("socket error\n");
                 continue;
             }
             
@@ -367,14 +365,18 @@ int main()
             printf("Connection accepted from server\n");
             
             memset(response, 0, sizeof(response));
-            recv_status = recv(server_data_socket, response, sizeof(response), 0);
-            if (recv_status == -1)
+            //continuouslly receive the file from the server
+            while(1)
             {
-                perror("Error receiving response from server\n");
-                return -1;
+                int bytes = recv(server_data_socket, response, sizeof(response), 0);
+                if(bytes <= 0)
+                {
+                    break;
+                }
+                printf("%s", response);
+                // reset the buffer
+                memset(response, 0, sizeof(response));
             }
-            printf("%s\n", response);
-            memset(response, 0, sizeof(response));
 
             // close the data connection
             close(server_data_socket);
@@ -480,7 +482,7 @@ int main()
                 // keep receiving the file until there is no byte left to receive
                 while(1)
                 {
-                    int bytes = recv(client_data_socket, buffer, sizeof(buffer), 0);
+                    int bytes = recv(server_data_socket, buffer, sizeof(buffer), 0);
                     if(bytes <= 0)
                     {
                         break;
@@ -497,9 +499,9 @@ int main()
                 close(client_data_socket);
 
                 
-                char response[10000];
+                char response[1000];
                 memset(response, 0, sizeof(response));
-                int recv_status = recv(server_data_socket, response, sizeof(response), 0);
+                int recv_status = recv(client_socket, response, sizeof(response), 0);
                 if (recv_status == -1)
                 {
                     perror("Error receiving response from server\n");
@@ -579,7 +581,8 @@ int main()
                 }
 
                 // accept the connection from the server
-                int server_data_socket = accept(client_data_socket, (struct sockaddr*) &client_address, &client_address_len);
+                //int server_data_socket = accept(client_data_socket, (struct sockaddr*) &client_address, &client_address_len);
+                int server_data_socket = accept(client_data_socket, NULL, NULL);
                 if (server_data_socket < 0)
                 {
                     perror("Error accepting connection from server\n");
@@ -607,10 +610,11 @@ int main()
                         {
                             break;
                         }
-                        int sent_bytes = send(client_data_socket, buffer, read_bytes, 0);
+                        int sent_bytes = send(server_data_socket, buffer, read_bytes, 0);
+                       
                         if(sent_bytes<0)
                         {
-                            printf("Connection closed\n");
+                            printf("Connection failed\n");
                             close(client_data_socket);
                             fclose(file);
                             break;
@@ -672,7 +676,7 @@ int main()
             memset(response, 0, sizeof(response));
 
             // check if the confirmation is "221 Service closing control connection"
-            if (strncmp(response, "221", 3) != 0)
+            if (strstr(response, "221") != 0)
             {
                 printf("QUIT command failed\n");
                 continue;
